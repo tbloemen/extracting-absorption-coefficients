@@ -2,7 +2,7 @@ from enum import Enum
 
 BATCH_SIZE = 64
 LEARNING_RATE = 1e-3
-EPOCHS = 200
+EPOCHS = 250
 
 # At how many percent do we say there is no significant change?
 LOW_DELTA = 0.5
