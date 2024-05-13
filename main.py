@@ -1,10 +1,13 @@
 import os.path
+import random
 
 import torch
+import torchaudio
 from torch import Tensor, nn
 from torch.nn import CrossEntropyLoss
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader
+from torchaudio.io import AudioEffector
 from torchvision import datasets
 from torchvision.transforms import ToTensor
 from tqdm import tqdm
@@ -50,6 +53,53 @@ def get_device() -> str:
     if torch.backends.mps.is_available():
         return "mps"
     return "cpu"
+
+
+class ModelRegression(nn.Module):
+    def __init__(self):
+        super(ModelRegression, self).__init__()
+        self.audio_features = nn.Sequential(
+            nn.Conv1d(in_channels=1, out_channels=64, kernel_size=33),
+            nn.ReLU(),
+            nn.MaxPool1d(kernel_size=4),
+            nn.Conv1d(in_channels=64, out_channels=32, kernel_size=17),
+            nn.ReLU(),
+            nn.MaxPool1d(4),
+            nn.Conv1d(in_channels=32, out_channels=16, kernel_size=9),
+            nn.ReLU(),
+            nn.MaxPool1d(4),
+        )
+
+        # L_x, L_y, L_z, (x_speaker, y_speaker), (x_microphone, y_microphone)
+        num_numerical_features = 3 + 2 + 2
+
+        self.numeric_features = nn.Sequential(
+            nn.Linear(in_features=num_numerical_features, out_features=64),
+            nn.ReLU(),
+            nn.Linear(in_features=64, out_features=2000),
+            nn.ReLU(),
+        )
+
+        self.combined_features = nn.Sequential(
+            nn.Linear(in_features=2000 * 2, out_features=1000), nn.ReLU()
+        )
+
+        # TODO: change out_features to be the actual number of parameters
+        out_features = 3
+        foo = nn.Linear(512, out_features)
+        foo.weight.data.normal_(0, 0.01)
+        foo.bias.data.fill_(0.0)
+
+        self.classifier_layer = nn.Sequential(foo, nn.Sigmoid())
+        self.predict_layer = nn.Sequential(self.model_fc, self.classifier_layer)
+
+    def forward(self, x):
+        x = self.audio_features(x)
+        x = x.view(-1, 2000)
+        y = self.numeric_features(x)
+        z = torch.cat((x, y), 1)
+        z = self.combined_features(z)
+        return z
 
 
 class NeuralNetwork(nn.Module):
@@ -181,6 +231,7 @@ def main():
         device=device,
         optimizer=optimizer,
     )
+
     if not os.path.isdir(MODEL_PATH):
         os.mkdir(MODEL_PATH)
     torch.save(model.state_dict(), MODEL_PATH + MODEL_NAME)
