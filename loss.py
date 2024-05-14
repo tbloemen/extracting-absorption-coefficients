@@ -2,19 +2,23 @@ import torch
 from torch import Tensor, nn
 
 from constants import THRESHOLD, TRADEOFF_ANGLE, TRADEOFF_SCALE
+from main import get_device
 
 
 class DareGramLoss(nn.Module):
+    device: str
+
     def __init__(self):
         super(DareGramLoss, self).__init__()
+        self.device = get_device()
 
     def forward(self, H1: Tensor, H2: Tensor) -> Tensor:
         # b = batch size
         # p = dimensionality of feature space
         b, p = H1.shape
 
-        A = torch.cat((torch.ones(b, 1).to(device), H1), 1)
-        B = torch.cat((torch.ones(b, 1).to(device), H2), 1)
+        A = torch.cat((torch.ones(b, 1).to(self.device), H1), 1)
+        B = torch.cat((torch.ones(b, 1).to(self.device), H2), 1)
 
         cov_A = A.t() @ A
         cov_B = B.t() @ B
@@ -39,8 +43,11 @@ class DareGramLoss(nn.Module):
         B = torch.linalg.pinv(cov_B, rtol=(L_B[k] / L_B[0]).detach())
 
         cos_sim = nn.CosineSimilarity(dim=0, eps=1e-6)
-        cos = torch.dist(torch.ones((p + 1)).to(device), (cos_sim(A, B)), p=1) / (p + 1)
+        cos = torch.dist(torch.ones((p + 1)).to(self.device), (cos_sim(A, B)), p=1) / (
+            p + 1
+        )
 
         return (
-            TRADEOFF_ANGLE * cos + TRADEOFF_SCALE * torch.dist((L_A[:k]), (L_B[:k])) / k
+            TRADEOFF_ANGLE * cos
+            + TRADEOFF_SCALE * torch.dist(input=L_A[:k], other=L_B[:k]) / k
         )

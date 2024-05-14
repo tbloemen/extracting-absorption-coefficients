@@ -7,6 +7,7 @@ from torchaudio.io import AudioEffector
 from constants import SAMPLERATE, RIR_DURATION
 
 
+# noinspection PyTypeChecker
 def preprocess_rir(rir_raw: Tensor, sample_rate: int, is_simulated: bool) -> Tensor:
     if sample_rate is not SAMPLERATE:
         rir_raw = resample(rir_raw, sample_rate, SAMPLERATE)

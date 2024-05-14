@@ -1,8 +1,12 @@
 from enum import Enum
 
 BATCH_SIZE = 64
-LEARNING_RATE = 1e-3
 EPOCHS = 250
+
+# Learning rate
+LEARNING_RATE = 1e-3
+GAMMA = 1e-4
+POWER = 0.75
 
 # At how many percent do we say there is no significant change?
 LOW_DELTA = 0.5
@@ -19,8 +23,8 @@ RIR_DURATION = 1.5
 
 
 class NnStage(Enum):
-    TRAINING = "training"
-    TEST = "test"
+    TARGET = "target"
+    SOURCE = "source"
 
 
 MODEL_PATH = "models/"
