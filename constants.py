@@ -21,6 +21,8 @@ TRADEOFF_SCALE = 0.001
 SAMPLERATE = 16000
 RIR_DURATION = 1.5
 
+OUT_FEATURES = 12
+
 
 class NnStage(Enum):
     TARGET = "target"

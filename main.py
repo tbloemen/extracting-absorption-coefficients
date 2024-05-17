@@ -3,7 +3,7 @@ from typing import Tuple
 
 import torch
 from torch import Tensor, nn
-from torch.nn import CrossEntropyLoss
+from torch.nn import CrossEntropyLoss, MSELoss, L1Loss
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader
 from torchvision import datasets
@@ -20,6 +20,7 @@ from constants import (
     MODEL_PATH,
     MODEL_NAME,
     GAMMA,
+    OUT_FEATURES,
     POWER,
 )
 from loss import DareGramLoss
@@ -86,8 +87,8 @@ class ModelRegression(nn.Module):
         )
 
         # TODO: change out_features to be the actual number of parameters
-        out_features = 12
-        foo = nn.Linear(2000, out_features)
+
+        foo = nn.Linear(2000, OUT_FEATURES)
         foo.weight.data.normal_(0, 0.01)
         foo.bias.data.fill_(0.0)
 
@@ -140,6 +141,7 @@ def train(
         Y_target: Tensor
         X_source: Tensor
         Y_source: Tensor
+        total_daregram, total_total, total_classifier = 0, 0, 0
         for i, (X_target, Y_target) in enumerate(tepoch):
             tepoch.set_description(f"Epoch {epoch} - Training")
 
@@ -164,47 +166,48 @@ def train(
             optimizer.step()
             optimizer.zero_grad()
 
+            total_daregram += daregram_loss.item()
+            total_classifier += classifier_loss.item()
+            total_loss += total_loss.item()
+
+            tepoch.set_postfix(
+                total_loss=total_total / (i + 1),
+                daregram_loss=total_daregram / (i + 1),
+                classifier_loss=total_classifier / (i + 1),
+            )
+
 
 def test(
     dataloaders: dict[NnStage, DataLoader],
     model: NeuralNetwork,
-    loss_fn: CrossEntropyLoss,
     device: str,
     epoch: int,
 ) -> float:
+
     size = 0
     for dataloader in dataloaders.values():
         size += len(dataloader.dataset)  # type: ignore
     model.eval()
-    mse_loss, daregram_loss, correct = 0, 0, 0
+    mse, mae = [], []
     with torch.no_grad():
-        source_iterator = iter(dataloaders[NnStage.SOURCE])
         with tqdm(dataloaders[NnStage.TARGET], unit="batch") as tepoch:
             X_target: Tensor
             Y_target: Tensor
-            X_source: Tensor
-            Y_source: Tensor
             for i, (X_target, Y_target) in enumerate(tepoch):
                 tepoch.set_description(f"Epoch {epoch} - Testing")
 
-                try:
-                    X_source, Y_source = next(source_iterator)
-                except StopIteration:
-                    source_iterator = iter(dataloaders[NnStage.SOURCE])
-                    X_source, Y_source = next(source_iterator)
-
-                X_source, Y_source = X_source.to(device), Y_source.to(device)
                 X_target, Y_target = X_target.to(device), Y_target.to(device)
 
-                pred = model(X_target)
-                mse_loss += loss_fn(pred, Y_target).item()
-                # correct += (pred.argmax(1) == Y_target).type(torch.float).sum().item()
+                outC, feature_t = model(X_target)
+                mse.append(MSELoss()(outC, Y_target))
+                mae.append(L1Loss()(outC, Y_target))
 
-                tepoch.set_postfix(
-                    average_loss=test_loss / (i + 1),
-                    accuracy=correct / min(size, (i + 1) * BATCH_SIZE) * 100.0,
-                )
-    return correct / size * 100.0
+                # Not nice to print(), maybe file writing?
+                for feature in range(OUT_FEATURES):
+                    mse.append(MSELoss()(outC[:, feature], Y_target[:, feature]))
+                    mae.append(L1Loss()(outC[:, feature], Y_target[:, feature]))
+                tepoch.set_postfix(MSE=mse[0], MAE=mae[0])
+    return 0
 
 
 def increase_lr(optimizer: Optimizer, epoch: int, param_lr: list[float]) -> Optimizer:
@@ -241,7 +244,6 @@ def run_epochs(
         accuracy_new = test(
             dataloaders=dataloaders,
             model=model,
-            loss_fn=loss_fn,
             device=device,
             epoch=epoch,
         )
