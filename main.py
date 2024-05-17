@@ -43,9 +43,9 @@ def get_dataloaders() -> dict[NnStage, DataLoader]:
     train_dataloader = DataLoader(training_data, batch_size=BATCH_SIZE, shuffle=True)
     test_dataloader = DataLoader(test_data, batch_size=BATCH_SIZE, shuffle=True)
 
-    print_datashape(train_dataloader, NnStage.TRAINING)
-    print_datashape(test_dataloader, NnStage.TEST)
-    return {NnStage.TRAINING: train_dataloader, NnStage.TEST: test_dataloader}
+    print_datashape(train_dataloader, NnStage.SOURCE)
+    print_datashape(test_dataloader, NnStage.TARGET)
+    return {NnStage.SOURCE: train_dataloader, NnStage.TARGET: test_dataloader}
 
 
 def get_device() -> str:
