@@ -18,10 +18,15 @@ THRESHOLD = 0.9
 TRADEOFF_ANGLE = 0.05
 TRADEOFF_SCALE = 0.001
 
-SAMPLERATE = 16000
+SAMPLERATE = 48000
 RIR_DURATION = 1.5
 
-OUT_FEATURES = 12
+# Spectrum of hearing
+FREQ_LOWER_BOUND = 60
+FREQ_UPPER_BOUND = 20000
+
+# abs. coef. for floor, ceiling, wall_left, wall_front, wall_right, wall_south, it that order.
+OUT_FEATURES = 6
 
 
 class NnStage(Enum):
