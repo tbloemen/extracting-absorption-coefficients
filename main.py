@@ -1,3 +1,4 @@
+import datetime
 import os.path
 from typing import Tuple
 
@@ -9,6 +10,7 @@ from torch.utils.data import DataLoader
 from torchvision import datasets
 from torchvision.transforms import ToTensor
 from tqdm import tqdm
+import logging
 
 from constants import (
     BATCH_SIZE,
@@ -22,9 +24,13 @@ from constants import (
     GAMMA,
     OUT_FEATURES,
     POWER,
+    Surface,
 )
 from loss import DareGramLoss
 from printing import print_datashape, print_model, print_done, print_model_found
+
+logging.basicConfig(filename="rp.log", filemode="w")
+logging.info(f"Logging has started at {datetime.datetime.now()}")
 
 
 def get_dataloaders() -> dict[NnStage, DataLoader]:
@@ -142,6 +148,7 @@ def train(
         X_source: Tensor
         Y_source: Tensor
         total_daregram, total_total, total_classifier = 0, 0, 0
+        num_batches = len(tepoch)
         for i, (X_target, Y_target) in enumerate(tepoch):
             tepoch.set_description(f"Epoch {epoch} - Training")
 
@@ -175,6 +182,9 @@ def train(
                 daregram_loss=total_daregram / (i + 1),
                 classifier_loss=total_classifier / (i + 1),
             )
+        logging.info(f"Loss - Total: {total_total / num_batches}")
+        logging.info(f"Loss - Daregram: {total_daregram / num_batches}")
+        logging.info(f"Loss - Classifier: {total_classifier / num_batches}")
 
 
 def test(
@@ -199,13 +209,23 @@ def test(
                 X_target, Y_target = X_target.to(device), Y_target.to(device)
 
                 outC, feature_t = model(X_target)
-                mse.append(MSELoss()(outC, Y_target))
-                mae.append(L1Loss()(outC, Y_target))
+                mse_loss_total = MSELoss()(outC, Y_target)
+                mae_loss_total = L1Loss()(outC, Y_target)
+                logging.info(msg=f"MSE Loss Total: {mse_loss_total}")
+                logging.info(msg=f"MAE Loss Total: {mae_loss_total}")
 
                 # Not nice to print(), maybe file writing?
                 for feature in range(OUT_FEATURES):
-                    mse.append(MSELoss()(outC[:, feature], Y_target[:, feature]))
-                    mae.append(L1Loss()(outC[:, feature], Y_target[:, feature]))
+                    mse_loss_wall = MSELoss()(outC[:, feature], Y_target[:, feature])
+                    mae_loss_wall = L1Loss()(outC[:, feature], Y_target[:, feature])
+
+                    logging.info(
+                        msg=f"MSE Loss {Surface(feature).name.capitalize()}: {mse_loss_wall}"
+                    )
+                    logging.info(
+                        msg=f"MAE Loss {Surface(feature).name.capitalize()}: {mae_loss_wall}"
+                    )
+
                 tepoch.set_postfix(MSE=mse[0], MAE=mae[0])
     return 0
 
