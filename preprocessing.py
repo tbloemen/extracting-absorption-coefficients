@@ -1,4 +1,5 @@
 import random
+from math import sqrt
 
 from numpy import ndarray
 from scipy import signal
@@ -55,14 +56,20 @@ def get_octave_band(
 def rir_in_octave_bands(
     rir: Tensor, min_freq: float, max_freq: float, center_freq: float = 1000.0
 ) -> list:
+
+    if min_freq >= center_freq >= max_freq:
+        raise ValueError(
+            f"Please readjust the frequencies.\nLower bound: {min_freq}\nCenter freq: {center_freq}\nMax freq: {max_freq}"
+        )
+
     rir: ndarray = rir.numpy()
 
     octave_bands = []
-    lower_bound = center_freq
+    lower_bound = center_freq / sqrt(2)
     while lower_bound / 2 >= min_freq:
         lower_bound /= 2
 
-    higher_bound = center_freq
+    higher_bound = center_freq * sqrt(2)
     while higher_bound * 2 <= max_freq:
         higher_bound *= 2
 
