@@ -22,7 +22,7 @@ SAMPLERATE = 48000
 RIR_DURATION = 1.5
 
 # Spectrum of hearing
-FREQ_LOWER_BOUND = 60
+FREQ_LOWER_BOUND = 20
 FREQ_UPPER_BOUND = 20000
 
 
@@ -34,10 +34,10 @@ class NnStage(Enum):
 class Surface(Enum):
     FLOOR = 0
     CEILING = 1
-    LEFT = 2
-    FRONT = 3
-    RIGHT = 4
-    BACK = 5
+    NORTH = 2
+    EAST = 3
+    SOUTH = 4
+    WEST = 5
 
 
 # abs. coef. for floor, ceiling, wall_left, wall_front, wall_right, wall_south, it that order.
@@ -45,3 +45,23 @@ OUT_FEATURES = len(Surface)
 
 MODEL_PATH = "models/"
 MODEL_NAME = "my_model.pth"
+
+RIR_DIR_SIMULATED = "data/rirs/simulated/"
+LABEL_FILE_SIMULATED = "data/labels_simulated.csv"
+
+RIR_DIR_REAL = "data/rirs/real"
+LABEL_FILE_REAL = "data/labels_real.csv"
+
+NUM_SIM_RIRS = 10
+
+
+class DataHeaders(Enum):
+    IMG_PATH = "img_path"
+    LENGTH_X = "length_x"
+    LENGTH_Y = "length_y"
+    LENGTH_Z = "length_z"
+    MICROPHONE_X = "microphone_x"
+    MICROPHONE_Y = "microphone_y"
+    SPEAKER_X = "speaker_x"
+    SPEAKER_Y = "speaker_y"
+    ABS_COEF_PREFIX = "abs_coef_"

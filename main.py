@@ -1,4 +1,5 @@
 import datetime
+import logging
 import os.path
 from typing import Tuple
 
@@ -7,13 +8,9 @@ from torch import Tensor, nn
 from torch.nn import CrossEntropyLoss, MSELoss, L1Loss
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader
-from torchvision import datasets
-from torchvision.transforms import ToTensor
 from tqdm import tqdm
-import logging
 
 from constants import (
-    BATCH_SIZE,
     NnStage,
     EPOCHS,
     LOW_DELTA,
@@ -26,33 +23,12 @@ from constants import (
     POWER,
     Surface,
 )
+from data_gen import get_dataloaders
 from loss import DareGramLoss
-from printing import print_datashape, print_model, print_done, print_model_found
+from printing import print_model, print_done, print_model_found
 
 logging.basicConfig(filename="rp.log", filemode="w")
 logging.info(f"Logging has started at {datetime.datetime.now()}")
-
-
-def get_dataloaders() -> dict[NnStage, DataLoader]:
-    # TODO change into actual data
-    training_data = datasets.FashionMNIST(
-        root="./data", train=True, download=True, transform=ToTensor()
-    )
-
-    # TODO change into actual data
-    test_data = datasets.FashionMNIST(
-        root="./data",
-        train=False,
-        download=True,
-        transform=ToTensor(),
-    )
-
-    train_dataloader = DataLoader(training_data, batch_size=BATCH_SIZE, shuffle=True)
-    test_dataloader = DataLoader(test_data, batch_size=BATCH_SIZE, shuffle=True)
-
-    print_datashape(train_dataloader, NnStage.SOURCE)
-    print_datashape(test_dataloader, NnStage.TARGET)
-    return {NnStage.SOURCE: train_dataloader, NnStage.TARGET: test_dataloader}
 
 
 def get_device() -> str:

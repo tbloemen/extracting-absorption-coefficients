@@ -1,13 +1,15 @@
-import random
 from math import sqrt
 
+import numpy as np
+import torch
 from numpy import ndarray
 from scipy import signal
-import torch
 from torch import Tensor
 from torchaudio.functional import add_noise, resample
 from torchaudio.io import AudioEffector
+
 from constants import SAMPLERATE, RIR_DURATION
+from data_gen import get_center_frequencies
 
 
 def preprocess_rir(
@@ -23,13 +25,13 @@ def preprocess_rir(
 
     if is_simulated:
         # random number between 50 and 70
-        noise_db = random.random() * 20 + 50
+        noise_db = np.random.uniform(low=50, high=70)
         noise_waveform = generate_white_noise(rir.shape[0])
         rir = add_noise(rir, noise_waveform, noise_db).squeeze()
 
     effector = AudioEffector(format="wav")
     codec_applied = effector.apply(waveform=rir, sample_rate=SAMPLERATE)
-    return rir_in_octave_bands(rir=codec_applied, min_freq=60, max_freq=SAMPLERATE)
+    return rir_in_octave_bands(rir=codec_applied, min_freq=20, max_freq=20000)
 
 
 def generate_white_noise(num_frames: int):
@@ -53,28 +55,14 @@ def get_octave_band(
     return torch.from_numpy(filtered_rir)
 
 
-def rir_in_octave_bands(
-    rir: Tensor, min_freq: float, max_freq: float, center_freq: float = 1000.0
-) -> list:
-
-    if min_freq >= center_freq >= max_freq:
-        raise ValueError(
-            f"Please readjust the frequencies.\nLower bound: {min_freq}\nCenter freq: {center_freq}\nMax freq: {max_freq}"
-        )
+def rir_in_octave_bands(rir: Tensor) -> list:
 
     rir: ndarray = rir.numpy()
-
     octave_bands = []
-    lower_bound = center_freq / sqrt(2)
-    while lower_bound / 2 >= min_freq:
-        lower_bound /= 2
 
-    higher_bound = center_freq * sqrt(2)
-    while higher_bound * 2 <= max_freq:
-        higher_bound *= 2
-
-    while lower_bound < higher_bound:
-        octave_bands.append(get_octave_band(rir, lower_bound, lower_bound * 2))
-        lower_bound *= 2
+    for center_freq in get_center_frequencies():
+        octave_bands.append(
+            get_octave_band(rir, center_freq / np.sqrt(2), center_freq * np.sqrt(2))
+        )
 
     return octave_bands
