@@ -263,14 +263,22 @@ def get_surface_material(surface: Surface):
 
 
 def get_materials():
-    return pra.make_materials(
-        ceiling=get_surface_material(Surface.CEILING),
-        floor=get_surface_material(Surface.FLOOR),
-        east=get_surface_material(Surface.EAST),
-        west=get_surface_material(Surface.WEST),
-        north=get_surface_material(Surface.NORTH),
-        south=get_surface_material(Surface.SOUTH),
+    materials = {}
+    for surface in Surface:
+        materials[surface] = get_surface_material(surface)
+
+    foo = pra.make_materials(
+        ceiling=materials[Surface.CEILING],
+        floor=materials[Surface.FLOOR],
+        east=materials[Surface.EAST],
+        west=materials[Surface.WEST],
+        north=materials[Surface.NORTH],
+        south=materials[Surface.SOUTH],
     )
+
+    for surface in Surface:
+        materials[surface] = materials[surface]["coeffs"]
+    return foo, materials
 
 
 def generate_room() -> tuple[ShoeBox, list[float], list[float], list[float]]:
@@ -280,7 +288,7 @@ def generate_room() -> tuple[ShoeBox, list[float], list[float], list[float]]:
 
     room_dim = [length_x, length_y, length_z]
 
-    materials = get_materials()
+    materials, material_dict = get_materials()
 
     room = pra.ShoeBox(p=room_dim, fs=SAMPLERATE, materials=materials)
 
