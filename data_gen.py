@@ -1,7 +1,7 @@
 import logging
 import os
 from functools import total_ordering
-from typing import Tuple, Any
+from typing import Tuple
 
 import numpy as np
 import pandas as pd
@@ -319,7 +319,21 @@ def generate_simulated_data():
         room.compute_rir()
         rir = room.rir[0][0]
 
+        # TODO: filewriting to RIR_DIR_SIMULATED and LABEL_FILE_SIMULATED
         # append a line to either a csv file directly or to a pandas file
+
+
+def generate_real_data():
+    # Pseudocode:
+
+    # For all room impulse responses:
+    #   Separate into octave bands
+    #   Calculate RT60 or RT30
+    #   (This probably has to be done by a Schroeder curve, evaluated at -5 and -35 for RT30)
+    #   invert Eyring's formula to get average absorption coefficient at that band.
+    #   if data about each wall, floor and ceiling is known: skew the mean towards the values of the walls.
+
+    pass
 
 
 def get_dataloaders() -> dict[NnStage, DataLoader]:
