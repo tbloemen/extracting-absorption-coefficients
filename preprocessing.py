@@ -1,5 +1,3 @@
-from math import sqrt
-
 import numpy as np
 import torch
 from numpy import ndarray
@@ -31,7 +29,7 @@ def preprocess_rir(
 
     effector = AudioEffector(format="wav")
     codec_applied = effector.apply(waveform=rir, sample_rate=SAMPLERATE)
-    return rir_in_octave_bands(rir=codec_applied, min_freq=20, max_freq=20000)
+    return rir_in_octave_bands(rir=codec_applied)
 
 
 def generate_white_noise(num_frames: int):
