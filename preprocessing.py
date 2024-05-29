@@ -53,7 +53,7 @@ def get_octave_band(
     return torch.from_numpy(filtered_rir)
 
 
-def rir_in_octave_bands(rir: Tensor) -> list:
+def rir_in_octave_bands(rir: Tensor) -> list[Tensor]:
 
     rir: ndarray = rir.numpy()
     octave_bands = []
