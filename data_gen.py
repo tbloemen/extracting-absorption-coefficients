@@ -148,7 +148,7 @@ def get_surface_material(surface: Surface):
     }
 
 
-def get_materials():
+def get_materials() -> Tuple[dict, dict[Surface, list[float]]]:
     materials = {}
     for surface in Surface:
         materials[surface] = get_surface_material(surface)
@@ -162,36 +162,80 @@ def get_materials():
         south=materials[Surface.SOUTH],
     )
 
+    coefficients_per_surface: dict[Surface, list[float]] = {}
     for surface in Surface:
-        materials[surface] = materials[surface]["coeffs"]
-    return foo, materials
+        coefficients_per_surface[surface] = materials[surface]["coeffs"]
+    return foo, coefficients_per_surface
 
 
-def generate_room() -> tuple[ShoeBox, list[float], list[float], list[float]]:
+def weighted_abs_coefs(
+    coefficients_per_surface: dict[Surface, list[float]], room_dim: list[float]
+):
+    area_per_surface = {
+        Surface.EAST: room_dim[1] * room_dim[2],
+        Surface.WEST: room_dim[1] * room_dim[2],
+        Surface.NORTH: room_dim[0] * room_dim[2],
+        Surface.SOUTH: room_dim[0] * room_dim[2],
+        Surface.FLOOR: room_dim[1] * room_dim[0],
+        Surface.CEILING: room_dim[1] * room_dim[0],
+    }
+
+    total_area = sum(area_per_surface.values())
+
+    coef_per_freq: dict[float, float] = {}
+    for surface in Surface:
+        for freq_idx in range(len(get_center_frequencies())):
+            coef_per_freq[freq_idx] += (
+                coefficients_per_surface[surface][freq_idx]
+                * area_per_surface[surface]
+                / total_area
+            )
+    return coef_per_freq
+
+
+def generate_room() -> (
+    tuple[ShoeBox, list[float], list[float], list[float], dict[float, float]]
+):
     length_x = np.random.uniform(low=4, high=10)
     length_y = np.random.uniform(low=2, high=10)
     length_z = np.random.uniform(low=2.5, high=5)
 
     room_dim = [length_x, length_y, length_z]
 
-    materials, material_dict = get_materials()
+    materials, coefficients_per_surface = get_materials()
 
     room = pra.ShoeBox(p=room_dim, fs=SAMPLERATE, materials=materials)
+
+    my_weighted_abs_coefs = weighted_abs_coefs(coefficients_per_surface, room_dim)
 
     source_position, receiver_position = get_source_and_receiver_positions(room_dim)
     room.add_source(position=source_position)
     room.add_microphone(loc=receiver_position, fs=SAMPLERATE)
 
-    return room, room_dim, source_position, receiver_position
+    return room, room_dim, source_position, receiver_position, my_weighted_abs_coefs
 
 
 def generate_simulated_data():
+    res = []
+
     for i in range(NUM_SIM_RIRS):
-        room, room_dim, source_pos, receiver_pos = None, None, None, None
+        room, room_dim, source_pos, receiver_pos, coefficient_per_freq = (
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
         j = 0
         while room is None:
             try:
-                room, room_dim, source_pos, receiver_pos = generate_room()
+                (
+                    room,
+                    room_dim,
+                    source_pos,
+                    receiver_pos,
+                    coefficient_per_freq,
+                ) = generate_room()
             except ValueError as e:
                 j += 1
                 if j >= 20:
@@ -205,21 +249,92 @@ def generate_simulated_data():
         room.compute_rir()
         rir = room.rir[0][0]
 
-        # TODO: filewriting to RIR_DIR_SIMULATED and LABEL_FILE_SIMULATED
-        # append a line to either a csv file directly or to a pandas file
+        center_freqs = get_center_frequencies()
+        octave_bands = rir.octave_bands(rir)
+        for k, (center_freq, octave_band) in enumerate(zip(center_freqs, octave_bands)):
+            filename = f"rir_sim_{i}_{center_freq}.wav"
+            torchaudio.save(
+                uri=(Path.cwd() / RIR_DIR_SIMULATED / filename),
+                src=octave_band,
+                sample_rate=SAMPLERATE,
+            )
+
+            res_dict: dict[DataHeaders, Any] = {DataHeaders.RIR_PATH: filename}
+
+            (
+                res_dict[DataHeaders.LENGTH_X],
+                res_dict[DataHeaders.LENGTH_Y],
+                res_dict[DataHeaders.LENGTH_Z],
+            ) = room_dim[:3]
+            res_dict[DataHeaders.SPEAKER_X], res_dict[DataHeaders.SPEAKER_Y] = (
+                source_pos[:2]
+            )
+            res_dict[DataHeaders.MICROPHONE_X], res_dict[DataHeaders.MICROPHONE_Y] = (
+                receiver_pos[:2]
+            )
+            res_dict[DataHeaders.FREQUENCY] = center_freq
+            res_dict[DataHeaders.ABS_COEF] = coefficient_per_freq[k]
+            res.append(res_dict)
+    df = pd.DataFrame(res)
+    df.to_csv(Path.cwd() / LABEL_FILE_SIMULATED)
+
+
+def get_abs_coef_from_real(volume: float, surface_area: float, filtered_rir: Tensor):
+    #   Calculate RT60 or RT30
+    rt60 = pra.measure_rt60(
+        h=filtered_rir, fs=SAMPLERATE, decay_db=60
+    )  # TODO: determine if 60 db's is doable.
+
+    #   invert Eyring's formula to get average absorption coefficient at that band.
+    average_abs_coef_sabine = 0.161 * volume / (surface_area * rt60)
+    average_abs_coef_eyring = -np.log(1 - average_abs_coef_sabine)
+
+    #   TODO: if data about each wall, floor and ceiling is known: skew the mean towards the values of the walls.
+    return average_abs_coef_eyring
 
 
 def generate_real_data():
-    # Pseudocode:
+    real_data: pd.DataFrame
 
-    # For all room impulse responses:
-    #   Separate into octave bands
-    #   Calculate RT60 or RT30
-    #   (This probably has to be done by a Schroeder curve, evaluated at -5 and -35 for RT30)
-    #   invert Eyring's formula to get average absorption coefficient at that band.
-    #   if data about each wall, floor and ceiling is known: skew the mean towards the values of the walls.
+    res = []
+    for i in real_data:
 
-    pass
+        real_rir = Tensor(real_data[i, RealDataHeaders.RIR_PATH])
+        surface_area = real_data[i, RealDataHeaders.AREA]
+        volume = real_data[i, RealDataHeaders.VOLUME]
+        real_rir_in_octave_bands = rir_in_octave_bands(real_rir)
+        center_freqs = get_center_frequencies()
+        for k, (center_freq, octave_band) in enumerate(
+            zip(center_freqs, real_rir_in_octave_bands)
+        ):
+            filename = f"rir_real_{i}_{center_freq}.wav"
+
+            torchaudio.save(
+                uri=(Path.cwd() / RIR_DIR_REAL / filename),
+                src=octave_band,
+                sample_rate=SAMPLERATE,
+            )
+
+            res_dict: dict[DataHeaders, Any] = {DataHeaders.RIR_PATH: filename}
+
+            (
+                res_dict[DataHeaders.LENGTH_X],
+                res_dict[DataHeaders.LENGTH_Y],
+                res_dict[DataHeaders.LENGTH_Z],
+            ) = ...
+            res_dict[DataHeaders.SPEAKER_X], res_dict[DataHeaders.SPEAKER_Y] = ...
+            res_dict[DataHeaders.MICROPHONE_X], res_dict[DataHeaders.MICROPHONE_Y] = ...
+            res_dict[DataHeaders.FREQUENCY] = center_freq
+
+            res_dict[DataHeaders.ABS_COEF] = get_abs_coef_from_real(
+                surface_area=surface_area,
+                volume=volume,
+                filtered_rir=octave_band,
+            )
+            res.append(res_dict)
+
+    df = pd.DataFrame(res)
+    df.to_csv(Path.cwd() / LABEL_FILE_REAL)
 
 
 def get_dataloaders() -> dict[NnStage, DataLoader]:
