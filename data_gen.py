@@ -47,7 +47,7 @@ class RIR_and_Numeric_Dataset(Dataset):
         dict[Surface, float],
     ]:
         rir_path = os.path.join(
-            self.rir_dir, self.labels.loc[self.labels.index[idx], DataHeaders.IMG_PATH]
+            self.rir_dir, self.labels.loc[self.labels.index[idx], DataHeaders.RIR_PATH]
         )
         rir, sample_rate = torchaudio.load(rir_path)
         length_x = self.labels.loc[self.labels.index[idx], DataHeaders.LENGTH_X]
@@ -70,7 +70,7 @@ class RIR_and_Numeric_Dataset(Dataset):
         for surface in Surface:
             absorption_params[surface] = self.labels.loc[
                 self.labels.index[idx],
-                f"{DataHeaders.ABS_COEF_PREFIX}{surface.name.lower()}",
+                f"{DataHeaders.ABS_COEF}{surface.name.lower()}",
             ]
 
         return ((rir, sample_rate), (length, microphone, speaker)), absorption_params
@@ -232,17 +232,19 @@ def get_dataloaders() -> dict[NnStage, DataLoader]:
         if not os.path.isfile(filepath):
             raise FileNotFoundError(f"File {filepath} was not found.")
 
-    training_data = RIR_and_Numeric_Dataset(
+    simulated_data = RIR_and_Numeric_Dataset(
         label_file=LABEL_FILE_SIMULATED, rir_dir=RIR_DIR_SIMULATED
     )
 
-    test_data = RIR_and_Numeric_Dataset(
+    real_data = RIR_and_Numeric_Dataset(
         label_file=LABEL_FILE_REAL, rir_dir=RIR_DIR_REAL
     )
 
-    train_dataloader = DataLoader(training_data, batch_size=BATCH_SIZE, shuffle=True)
-    test_dataloader = DataLoader(test_data, batch_size=BATCH_SIZE, shuffle=True)
+    simulated_dataloader = DataLoader(
+        simulated_data, batch_size=BATCH_SIZE, shuffle=True
+    )
+    real_dataloader = DataLoader(real_data, batch_size=BATCH_SIZE, shuffle=True)
 
-    print_datashape(train_dataloader, NnStage.SOURCE)
-    print_datashape(test_dataloader, NnStage.TARGET)
-    return {NnStage.SOURCE: train_dataloader, NnStage.TARGET: test_dataloader}
+    print_datashape(simulated_dataloader, NnStage.SOURCE)
+    print_datashape(real_dataloader, NnStage.TARGET)
+    return {NnStage.SOURCE: simulated_dataloader, NnStage.TARGET: real_dataloader}

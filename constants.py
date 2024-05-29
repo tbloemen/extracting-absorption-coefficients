@@ -56,7 +56,7 @@ NUM_SIM_RIRS = 10
 
 
 class DataHeaders(Enum):
-    IMG_PATH = "img_path"
+    RIR_PATH = "rir_path"
     LENGTH_X = "length_x"
     LENGTH_Y = "length_y"
     LENGTH_Z = "length_z"
@@ -64,4 +64,10 @@ class DataHeaders(Enum):
     MICROPHONE_Y = "microphone_y"
     SPEAKER_X = "speaker_x"
     SPEAKER_Y = "speaker_y"
-    ABS_COEF_PREFIX = "abs_coef_"
+    ABS_COEF = "abs_coef"
+    FREQUENCY = "frequency"
+
+
+class RealDataHeaders(DataHeaders):
+    AREA = "area"
+    VOLUME = "volume"
