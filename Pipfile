@@ -10,6 +10,9 @@ pyroomacoustics = "*"
 torchaudio = "*"
 tqdm = "*"
 matplotlib = "*"
+h5py = "*"
+jupyter = "*"
+mpld3 = "*"
 
 [dev-packages]
 black = "*"
