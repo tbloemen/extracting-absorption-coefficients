@@ -1,5 +1,9 @@
 from enum import Enum
 
+from utils import get_center_frequencies, get_device
+
+DEVICE = get_device()
+
 BATCH_SIZE = 64
 EPOCHS = 250
 
@@ -9,21 +13,18 @@ GAMMA = 1e-4
 POWER = 0.75
 
 # At how many percent do we say there is no significant change?
-LOW_DELTA = 0.5
+LOW_DELTA = 0.001
 
 # How many iterations should this low change be after each other?
-SAME_DELTA_EPOCHS = 10
+SAME_DELTA_EPOCHS = 5
 
 THRESHOLD = 0.9
-TRADEOFF_ANGLE = 0.05
-TRADEOFF_SCALE = 0.001
+TRADEOFF_ANGLE = 0.5
+TRADEOFF_SCALE = 0.01
 
 SAMPLERATE = 48000
 RIR_DURATION = 1.5
-
-# Spectrum of hearing
-FREQ_LOWER_BOUND = 20
-FREQ_UPPER_BOUND = 20000
+NUM_SAMPLES = int(SAMPLERATE * RIR_DURATION)
 
 
 class NnStage(Enum):
@@ -40,9 +41,6 @@ class Surface(Enum):
     WEST = 5
 
 
-# abs. coef. for floor, ceiling, wall_left, wall_front, wall_right, wall_south, it that order.
-OUT_FEATURES = len(Surface)
-
 MODEL_PATH = "models/"
 MODEL_NAME = "my_model.pth"
 
@@ -52,22 +50,23 @@ LABEL_FILE_SIMULATED = "data/labels_simulated.csv"
 RIR_DIR_REAL = "data/rirs/real"
 LABEL_FILE_REAL = "data/labels_real.csv"
 
-NUM_SIM_RIRS = 10
+NUM_SIM_RIRS = 4000
+
+
+CENTER_FREQUENCIES = get_center_frequencies()
 
 
 class DataHeaders(Enum):
+
     RIR_PATH = "rir_path"
     LENGTH_X = "length_x"
     LENGTH_Y = "length_y"
     LENGTH_Z = "length_z"
     MICROPHONE_X = "microphone_x"
     MICROPHONE_Y = "microphone_y"
+    MICROPHONE_Z = "microphone_z"
     SPEAKER_X = "speaker_x"
     SPEAKER_Y = "speaker_y"
+    SPEAKER_Z = "speaker_z"
     ABS_COEF = "abs_coef"
     FREQUENCY = "frequency"
-
-
-class RealDataHeaders(DataHeaders):
-    AREA = "area"
-    VOLUME = "volume"
