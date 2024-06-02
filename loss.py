@@ -1,53 +1,44 @@
 import torch
 from torch import Tensor, nn
 
-from constants import THRESHOLD, TRADEOFF_ANGLE, TRADEOFF_SCALE
-from main import get_device
+from constants import THRESHOLD, TRADEOFF_ANGLE, TRADEOFF_SCALE, DEVICE
 
 
-class DareGramLoss(nn.Module):
-    device: str
+def dare_gram_loss(H1: Tensor, H2: Tensor) -> Tensor:
+    # b = batch size
+    # p = dimensionality of feature space
+    b, p = H1.shape
+    b1, p1 = H2.shape
 
-    def __init__(self):
-        super(DareGramLoss, self).__init__()
-        self.device = get_device()
+    A = torch.cat((torch.ones(b, 1).to(DEVICE), H1), 1)
+    B = torch.cat((torch.ones(b1, 1).to(DEVICE), H2), 1)
 
-    def forward(self, H1: Tensor, H2: Tensor) -> Tensor:
-        # b = batch size
-        # p = dimensionality of feature space
-        b, p = H1.shape
+    cov_A = A.t() @ A
+    cov_B = B.t() @ B
 
-        A = torch.cat((torch.ones(b, 1).to(self.device), H1), 1)
-        B = torch.cat((torch.ones(b, 1).to(self.device), H2), 1)
+    L_A: Tensor
+    L_B: Tensor
+    _, L_A, _ = torch.linalg.svd(cov_A)
+    _, L_B, _ = torch.linalg.svd(cov_B)
 
-        cov_A = A.t() @ A
-        cov_B = B.t() @ B
+    eigen_A = torch.cumsum(L_A.detach(), dim=0) / L_A.sum()
+    eigen_B = torch.cumsum(L_B.detach(), dim=0) / L_B.sum()
 
-        L_A: Tensor
-        L_B: Tensor
-        _, L_A, _ = torch.linalg.svd(cov_A)
-        _, L_B, _ = torch.linalg.svd(cov_B)
+    T_A: float = max(THRESHOLD, eigen_A[1].detach())
+    T_B: float = max(THRESHOLD, eigen_B[1].detach())
 
-        eigen_A = torch.cumsum(L_A.detach(), dim=0) / L_A.sum()
-        eigen_B = torch.cumsum(L_B.detach(), dim=0) / L_B.sum()
+    index_A = torch.argwhere(eigen_A.detach() <= T_A)[-1].item()
+    index_B = torch.argwhere(eigen_B.detach() <= T_B)[-1].item()
 
-        T_A: float = max(THRESHOLD, eigen_A[1].detach())
-        T_B: float = max(THRESHOLD, eigen_B[1].detach())
+    k = max(index_A, index_B)
 
-        index_A = torch.argwhere(eigen_A.detach() <= T_A)[-1].item()
-        index_B = torch.argwhere(eigen_B.detach() <= T_B)[-1].item()
+    A = torch.linalg.pinv(cov_A, rtol=(L_A[k] / L_A[0]).detach())
+    B = torch.linalg.pinv(cov_B, rtol=(L_B[k] / L_B[0]).detach())
 
-        k = max(index_A, index_B)
+    cos_sim = nn.CosineSimilarity(dim=0, eps=1e-6)
+    cos = torch.dist(torch.ones((p + 1)).to(DEVICE), (cos_sim(A, B)), p=1) / (p + 1)
 
-        A = torch.linalg.pinv(cov_A, rtol=(L_A[k] / L_A[0]).detach())
-        B = torch.linalg.pinv(cov_B, rtol=(L_B[k] / L_B[0]).detach())
-
-        cos_sim = nn.CosineSimilarity(dim=0, eps=1e-6)
-        cos = torch.dist(torch.ones((p + 1)).to(self.device), (cos_sim(A, B)), p=1) / (
-            p + 1
-        )
-
-        return (
-            TRADEOFF_ANGLE * cos
-            + TRADEOFF_SCALE * torch.dist(input=L_A[:k], other=L_B[:k]) / k
-        )
+    return (
+        TRADEOFF_ANGLE * cos
+        + TRADEOFF_SCALE * torch.dist(input=L_A[:k], other=L_B[:k]) / k
+    )
