@@ -13,6 +13,9 @@ matplotlib = "*"
 h5py = "*"
 jupyter = "*"
 mpld3 = "*"
+ffmpeg = "*"
+soundfile = "*"
+seaborn = "*"
 
 [dev-packages]
 black = "*"

@@ -1,3 +1,7 @@
+"""
+This file houses the DARE-GRAM loss function. This function is copied from the original paper.
+"""
+
 import torch
 from torch import Tensor, nn
 
@@ -5,6 +9,13 @@ from constants import THRESHOLD, TRADEOFF_ANGLE, TRADEOFF_SCALE, DEVICE
 
 
 def dare_gram_loss(H1: Tensor, H2: Tensor) -> Tensor:
+    """
+    Returns the DARE-GRAM loss between two feature spaces. The two Tensors have to be of the same size to work.
+    :param H1: The first feature space.
+    :param H2: The second feature space.
+    :return: The loss between the two feature spaces. This is a Tensor with a single item in it.
+    """
+
     # b = batch size
     # p = dimensionality of feature space
     b, p = H1.shape

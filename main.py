@@ -1,15 +1,22 @@
+"""
+This file houses the main functionality of the machine learning model.
+"""
+
 import datetime
 import logging
 import os.path
+from pathlib import Path
 from typing import Tuple
 
+import pandas as pd
 import torch
 from torch import Tensor, nn
-from torch.nn import CrossEntropyLoss, MSELoss, L1Loss
+from torch.nn import MSELoss, L1Loss
 from torch.optim import Optimizer
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
+import printing
 from constants import (
     NnStage,
     EPOCHS,
@@ -19,197 +26,203 @@ from constants import (
     MODEL_PATH,
     MODEL_NAME,
     GAMMA,
-    OUT_FEATURES,
     POWER,
-    Surface,
+    DEVICE,
+    NUM_SAMPLES,
+    OUTPUT_DIR,
+    CENTER_FREQUENCIES,
 )
 from data_gen import get_dataloaders
-from loss import DareGramLoss
+from loss import dare_gram_loss
 from printing import print_model, print_done, print_model_found
 
 logging.basicConfig(filename="rp.log", filemode="w")
 logging.info(f"Logging has started at {datetime.datetime.now()}")
 
 
-def get_device() -> str:
-    # if torch.cuda.is_available():
-    #     return "cuda"
-    if torch.backends.mps.is_available():
-        return "mps"
-    return "cpu"
-
-
-class ModelRegression(nn.Module):
+class NeuralNetwork(nn.Module):
     def __init__(self):
-        super(ModelRegression, self).__init__()
+        super(NeuralNetwork, self).__init__()
         self.audio_features = nn.Sequential(
             nn.Conv1d(in_channels=1, out_channels=64, kernel_size=33),
             nn.ReLU(),
+            nn.BatchNorm1d(64),
             nn.MaxPool1d(kernel_size=4),
             nn.Conv1d(in_channels=64, out_channels=32, kernel_size=17),
             nn.ReLU(),
+            nn.BatchNorm1d(32),
             nn.MaxPool1d(4),
             nn.Conv1d(in_channels=32, out_channels=16, kernel_size=9),
             nn.ReLU(),
+            nn.BatchNorm1d(16),
             nn.MaxPool1d(4),
+            nn.Linear(in_features=746, out_features=125),
         )
 
-        # L_x, L_y, L_z, (x_speaker, y_speaker), (x_microphone, y_microphone)
-        num_numerical_features = 3 + 2 + 2
+        # L_x, L_y, L_z, (x_speaker, y_speaker, z_speaker), (x_microphone, y_microphone, z_microphone)
+        num_numerical_features = 9
 
         self.numeric_features = nn.Sequential(
             nn.Linear(in_features=num_numerical_features, out_features=64),
             nn.ReLU(),
-            nn.Linear(in_features=64, out_features=2000),
+            nn.BatchNorm1d(64),
+            nn.Linear(in_features=64, out_features=500),
             nn.ReLU(),
+            nn.BatchNorm1d(500),
         )
 
         self.combined_features = nn.Sequential(
-            nn.Linear(in_features=2000 * 2, out_features=1000), nn.ReLU()
+            nn.Linear(in_features=2500, out_features=500),
+            nn.ReLU(),
+            nn.BatchNorm1d(500),
         )
 
-        # TODO: change out_features to be the actual number of parameters
+        self.classifier_layer = nn.Sequential(
+            nn.Linear(500, len(CENTER_FREQUENCIES)),
+        )
 
-        foo = nn.Linear(2000, OUT_FEATURES)
-        foo.weight.data.normal_(0, 0.01)
-        foo.bias.data.fill_(0.0)
-
-        self.classifier_layer = nn.Sequential(foo, nn.Sigmoid())
-
-    def forward(self, x: Tensor) -> Tuple[Tensor, Tensor]:
-        x = self.audio_features(x)
-        x = x.view(-1, 2000)
-        y = self.numeric_features(x)
-        z = torch.cat((x, y), 1)
+    def forward(self, x: Tensor) -> tuple[Tensor, Tensor]:
+        """
+        Feeds the data forward in the model.
+        :param x: The input data from the dataloader.
+        :return: A tuple of the estimated 10 absorption coefficients, and the feature space for the DARE-GRAM loss.
+        """
+        rir, numeric_data = (
+            x[:, :NUM_SAMPLES].reshape((-1, 1, NUM_SAMPLES)),
+            x[:, NUM_SAMPLES:],
+        )
+        x = self.audio_features(rir)
+        x = x.reshape(rir.shape[0], -1)
+        y = self.numeric_features(numeric_data)
+        z = torch.cat((x, y), dim=1)
         features = self.combined_features(z)
         outC = self.classifier_layer(features)
-        return outC, features
-
-
-class NeuralNetwork(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.flatten = nn.Flatten()
-        self.linear_relu_stack = nn.Sequential(
-            nn.Linear(28 * 28, 512),
-            nn.ReLU(),
-            nn.Linear(512, 512),
-            nn.ReLU(),
-            nn.Linear(512, 10),
-        )
-
-    def forward(self, x: Tensor) -> Tensor:
-        x = self.flatten(x)
-        logits: Tensor = self.linear_relu_stack(x)
-        return logits
+        return outC.squeeze(), features.squeeze()
 
 
 def train(
-    dataloaders: dict[NnStage.value, DataLoader],
+    dataloaders: dict[NnStage, DataLoader],
     model: NeuralNetwork,
-    loss_fn: CrossEntropyLoss,
     optimizer: Optimizer,
-    device: str,
     epoch: int,
 ):
+    """
+    Trains the model.
+    :param dataloaders: The dataloaders of the real and simulated dataset.
+    :param model: The neural network model to be trained.
+    :param optimizer: The optimizer which optimizes the model.
+    :param epoch: The epoch (iteration) the model is on.
+    """
     model.train()
 
-    daregram_loss_fn = DareGramLoss()
+    target_iterator = iter(dataloaders[NnStage.TARGET])
 
-    source_iterator = iter(dataloaders[NnStage.SOURCE])
-
-    with tqdm(dataloaders[NnStage.TARGET], unit="batch") as tepoch:
+    with tqdm(dataloaders[NnStage.SOURCE], unit="batch") as tepoch:
         X_target: Tensor
         Y_target: Tensor
         X_source: Tensor
         Y_source: Tensor
-        total_daregram, total_total, total_classifier = 0, 0, 0
-        num_batches = len(tepoch)
-        for i, (X_target, Y_target) in enumerate(tepoch):
+        total_daregram, total_total, total_classifier_t, total_classifier_s = 0, 0, 0, 0
+        for i, (X_source, Y_source) in enumerate(tepoch):
             tepoch.set_description(f"Epoch {epoch} - Training")
 
             try:
-                X_source, Y_source = next(source_iterator)
+                X_target, Y_target = next(target_iterator)
             except StopIteration:
-                source_iterator = iter(dataloaders[NnStage.SOURCE])
-                X_source, Y_source = next(source_iterator)
+                target_iterator = iter(dataloaders[NnStage.TARGET])
+                X_target, Y_target = next(target_iterator)
 
-            X_source, Y_source = X_source.to(device), Y_source.to(device)
-            X_target, Y_target = X_target.to(device), Y_target.to(device)
+            if X_source.shape != X_target.shape:
+                continue
+
+            X_source, Y_source = X_source.to(DEVICE), Y_source.to(DEVICE)
+            X_target, Y_target = X_target.to(DEVICE), Y_target.to(DEVICE)
 
             # Compute prediction error
-            _, feature_t = model(X_target)
+            outC_t, feature_t = model(X_target)
             outC_s, feature_s = model(X_source)
-            daregram_loss: Tensor = daregram_loss_fn(feature_t, feature_s)
-            classifier_loss: Tensor = loss_fn(outC_s, Y_source)
-            total_loss = daregram_loss + classifier_loss
+            daregram_loss: Tensor = dare_gram_loss(feature_t, feature_s)
+            classifier_loss_t: Tensor = nn.MSELoss()(outC_t, Y_target)
+            classifier_loss_s: Tensor = nn.MSELoss()(outC_s, Y_source)
+
+            total_loss = daregram_loss + classifier_loss_s
 
             # Backpropagation
             total_loss.backward()
             optimizer.step()
-            optimizer.zero_grad()
 
             total_daregram += daregram_loss.item()
-            total_classifier += classifier_loss.item()
-            total_loss += total_loss.item()
+            total_classifier_t += classifier_loss_t.item()
+            total_classifier_s += classifier_loss_s.item()
+            total_total += total_loss.item()
 
             tepoch.set_postfix(
                 total_loss=total_total / (i + 1),
                 daregram_loss=total_daregram / (i + 1),
-                classifier_loss=total_classifier / (i + 1),
+                classifier_s_loss=total_classifier_s / (i + 1),
+                classifier_t_loss=total_classifier_t / (i + 1),
             )
-        logging.info(f"Loss - Total: {total_total / num_batches}")
-        logging.info(f"Loss - Daregram: {total_daregram / num_batches}")
-        logging.info(f"Loss - Classifier: {total_classifier / num_batches}")
+    optimizer.zero_grad()
 
 
 def test(
-    dataloaders: dict[NnStage, DataLoader],
-    model: NeuralNetwork,
-    device: str,
-    epoch: int,
-) -> float:
+    model: NeuralNetwork, epoch: int, valid_loader: DataLoader = None
+) -> Tuple[float, float]:
 
-    size = 0
-    for dataloader in dataloaders.values():
-        size += len(dataloader.dataset)  # type: ignore
     model.eval()
-    mse, mae = [], []
+    error_dfs = []
+    target_dataloader_with_freq = get_dataloaders()[NnStage.TARGET]
+    error_file = "error.csv"
+
+    if valid_loader is not None:
+        target_dataloader_with_freq = valid_loader
+        error_file = "error_validation.csv"
     with torch.no_grad():
-        with tqdm(dataloaders[NnStage.TARGET], unit="batch") as tepoch:
+        with tqdm(target_dataloader_with_freq, unit="batch") as tepoch:
             X_target: Tensor
             Y_target: Tensor
+            mse_loss_total, mae_loss_total = 0, 0
             for i, (X_target, Y_target) in enumerate(tepoch):
                 tepoch.set_description(f"Epoch {epoch} - Testing")
 
-                X_target, Y_target = X_target.to(device), Y_target.to(device)
+                X_target, Y_target = X_target.to(DEVICE), Y_target.to(DEVICE)
 
-                outC, feature_t = model(X_target)
-                mse_loss_total = MSELoss()(outC, Y_target)
-                mae_loss_total = L1Loss()(outC, Y_target)
-                logging.info(msg=f"MSE Loss Total: {mse_loss_total}")
-                logging.info(msg=f"MAE Loss Total: {mae_loss_total}")
+                outC, _ = model(X_target)
+                mse_loss = MSELoss()(outC, Y_target)
+                mae_loss = L1Loss()(outC, Y_target)
 
-                # Not nice to print(), maybe file writing?
-                for feature in range(OUT_FEATURES):
-                    mse_loss_wall = MSELoss()(outC[:, feature], Y_target[:, feature])
-                    mae_loss_wall = L1Loss()(outC[:, feature], Y_target[:, feature])
+                mse_loss_total += mse_loss.item()
+                mae_loss_total += mae_loss.item()
 
-                    logging.info(
-                        msg=f"MSE Loss {Surface(feature).name.capitalize()}: {mse_loss_wall}"
-                    )
-                    logging.info(
-                        msg=f"MAE Loss {Surface(feature).name.capitalize()}: {mae_loss_wall}"
-                    )
+                tepoch.set_postfix(
+                    MSE=mse_loss_total / (i + 1), MAE=mae_loss_total / (i + 1)
+                )
 
-                tepoch.set_postfix(MSE=mse[0], MAE=mae[0])
-    return 0
+                error = torch.abs(outC - Y_target)
+
+                error_dfs.append(pd.DataFrame(error.cpu()))
+    error_df = pd.concat(error_dfs)
+    error_df.to_csv(Path.cwd() / OUTPUT_DIR / error_file)
+    mae = error_df.mean(axis="rows")
+    mse = error_df.pow(2).mean(axis="rows")
+    mae.to_csv(Path.cwd() / OUTPUT_DIR / f"mae/mae_{epoch}.csv")
+    mse.to_csv(Path.cwd() / OUTPUT_DIR / f"mse/mse_{epoch}.csv")
+    num_batches = len(target_dataloader_with_freq)
+    return mse_loss_total / num_batches, mae_loss_total / num_batches
 
 
-def increase_lr(optimizer: Optimizer, epoch: int, param_lr: list[float]) -> Optimizer:
+def inv_lr_scheduler(
+    optimizer: Optimizer, epoch: int, param_lr: list[float]
+) -> Optimizer:
+    """
+    Decreases the learning rate over time.
+    :param optimizer: The optimizer of which the learning rate needs to be adjusted.
+    :param epoch: The current epoch number.
+    :param param_lr: The parameters regarding the learning rate of the optimizer.
+    :return: The updated optimizer.
+    """
     lr = LEARNING_RATE * (1 + GAMMA * epoch) ** (-POWER)
-    i = 0
-    for param_group in optimizer.param_groups:
+    for i, param_group in enumerate(optimizer.param_groups):
         param_group["lr"] = lr * param_lr[i]
     optimizer.zero_grad()
     return optimizer
@@ -218,63 +231,96 @@ def increase_lr(optimizer: Optimizer, epoch: int, param_lr: list[float]) -> Opti
 def run_epochs(
     dataloaders: dict[NnStage, DataLoader],
     model: NeuralNetwork,
-    device: str,
     optimizer: Optimizer,
 ) -> None:
-    epoch, accuracy, accuracy_new, low_delta = 0, 0, 0, 0
-    loss_fn = nn.CrossEntropyLoss()
-    param_lr = []
-    for param_group in optimizer.param_groups:
-        param_lr.append(param_group["lr"])
+    """
+    Runs all epochs.
+    :param dataloaders: The data loaders for the real and simulated dataset.
+    :param model: The machine learning model which needs to be trained and tested.
+    :param optimizer: The optimizer to optimize the model.
+    """
+    epoch, mse, mse_new, low_delta = 0, 0, 0, 0
+    epoch_mse_list: list[dict[str, float | int]] = []
+
+    param_lr_list = [param_group["lr"] for param_group in optimizer.param_groups]
+
     while epoch < EPOCHS and low_delta < SAME_DELTA_EPOCHS:
         epoch += 1
-        optimizer = increase_lr(optimizer=optimizer, epoch=epoch, param_lr=param_lr)
+        optimizer = inv_lr_scheduler(
+            optimizer=optimizer, epoch=epoch, param_lr=param_lr_list
+        )
         train(
             dataloaders=dataloaders,
             model=model,
-            loss_fn=loss_fn,
-            device=device,
             optimizer=optimizer,
             epoch=epoch,
         )
-        accuracy_new = test(
-            dataloaders=dataloaders,
-            model=model,
-            device=device,
-            epoch=epoch,
-        )
-        if abs(accuracy_new - accuracy) > LOW_DELTA:
-            low_delta = 0
-            accuracy = accuracy_new
-        else:
-            low_delta += 1
+        if epoch % 1 == 0:
+            save_model(model)
+            mse_new, mae_new = test(
+                model=model,
+                epoch=epoch,
+            )
 
-    print_done(epoch, accuracy_new)
+            epoch_mse_dict = {"epoch": epoch, "mse": mse_new, "mae": mae_new}
+            epoch_mse_list.append(epoch_mse_dict)
+
+            if abs(mse_new - mse) > LOW_DELTA:
+                low_delta = 0
+                mse = mse_new
+            else:
+                low_delta += 1
+    df = pd.DataFrame(epoch_mse_list)
+    df.to_csv(Path.cwd() / "errors.csv")
+    print_done(epoch, mse)
 
 
-def main():
-    dataloaders = get_dataloaders()
-
-    device = get_device()
-    model = NeuralNetwork().to(device)
-    if os.path.isfile(MODEL_PATH + MODEL_NAME):
-        print_model_found(MODEL_PATH + MODEL_NAME)
-        model.load_state_dict(torch.load(MODEL_PATH + MODEL_NAME))
-    print_model(model)
-
-    optimizer = torch.optim.SGD(model.parameters(), lr=LEARNING_RATE)
-
-    run_epochs(
-        dataloaders=dataloaders,
-        model=model,
-        device=device,
-        optimizer=optimizer,
-    )
-
+def save_model(model: NeuralNetwork):
+    """Saves the model to file."""
     if not os.path.isdir(MODEL_PATH):
         os.mkdir(MODEL_PATH)
     torch.save(model.state_dict(), MODEL_PATH + MODEL_NAME)
 
 
+def get_results():
+    """
+    Gets the result of a trained network.
+    """
+    torch.cuda.empty_cache()
+    model = NeuralNetwork().to(DEVICE)
+    if os.path.isfile(MODEL_PATH + MODEL_NAME):
+        model.load_state_dict(torch.load(MODEL_PATH + MODEL_NAME))
+    print_model(model)
+
+    test(model, 0)
+
+    printing.results()
+
+
+def main():
+    """Prepares the data and runs the model."""
+    dataloaders = get_dataloaders()
+    printing.main()
+    torch.cuda.empty_cache()
+
+    model = NeuralNetwork().to(DEVICE)
+    model_name = "my_model_mse.pth"
+    if os.path.isfile(MODEL_PATH + model_name):
+        print_model_found(MODEL_PATH + model_name)
+        model.load_state_dict(torch.load(MODEL_PATH + model_name))
+    print_model(model)
+
+    optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
+
+    run_epochs(
+        dataloaders=dataloaders,
+        model=model,
+        optimizer=optimizer,
+    )
+
+    save_model(model)
+    printing.results()
+
+
 if __name__ == "__main__":
-    main()
+    get_results()
